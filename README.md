@@ -1,148 +1,108 @@
-# Ounjé Mi — recettes et menus de la semaine
+# Ounjé Mi — Flutter & Dart
 
-API locale pour sélectionner des recettes à partir d'aliments choisis, générer une semaine de déjeuners et de dîners, consulter les photos et préparer une liste de courses adaptée au nombre de personnes.
+Application **Flutter**, logique métier **Dart**, catalogue de recettes illustrées et menus hebdomadaires selon les fruits, légumes, féculents et protéines choisis. Le projet ne contient aucun serveur ou script Python.
 
-La base initiale contient **146 recettes, 146 photos et 1 231 lignes d'ingrédients** extraites de l'édition de 261 pages de *Bible minceur*, Hugo Blanc. Chaque recette conserve ses pages source, ses ingrédients bruts, ses étapes, ses portions et sa durée. Toutes les recettes sont marquées `needs_review` : l'extraction et la classification sont automatiques.
+## Fonctionnalités
 
-## Lancement rapide
+- **Recettes** : 146 fiches avec photos, recherche, ingrédients, étapes et pages source.
+- **Mes choix** : aliments préférés/exclus, nombre de personnes, temps maximal, végétarien et répétitions.
+- **Ma semaine** : 7 déjeuners et 7 dîners ; les créneaux impossibles restent explicitement vides.
+- **Courses** : ingrédients regroupés, quantités ajustées aux portions, lignes imprécises à adapter, cases à cocher et copie de la liste.
+- Sauvegarde locale du dernier planning et restauration au démarrage ; export JSON par copie.
 
-Python **3.11 ou plus**. L'API utilise uniquement la bibliothèque standard : aucune installation nécessaire pour consulter la base ou générer des menus.
+## Démarrage
+
+Projet vérifié avec **Flutter 3.47.6 / Dart 3.13.5**. Installer le SDK Flutter stable, puis :
 
 ```bash
 git clone https://github.com/sydneygael/ounje-mi.git
 cd ounje-mi
-python3 -m app.database
-python3 -m app.server
+flutter pub get
+flutter run -d chrome
 ```
 
-L'API répond sur `http://127.0.0.1:8000`. La première commande construit une base SQLite à partir de `data/recipes.json` ; le serveur la crée également au premier démarrage si elle manque. La réimportation met à jour le catalogue sans supprimer les plannings enregistrés. Les modifications doivent être faites dans le JSON source avant réimport, sinon elles seront écrasées par la réimportation.
+Les projets `android/`, `ios/`, `macos/` et `web/` sont inclus. Pour un appareil ou un émulateur natif : `flutter run`.
 
-```bash
-curl http://127.0.0.1:8000/health
-curl 'http://127.0.0.1:8000/foods?group=legume'
-curl 'http://127.0.0.1:8000/recipes?food_ids=brocoli,quinoa&food_mode=all'
-curl http://127.0.0.1:8000/recipes/bm-176
-```
+iOS et macOS nécessitent macOS et Xcode ; Android nécessite le SDK Android et un émulateur ou appareil. Aucune clé API n'est nécessaire. Les recettes et photos sont embarquées dans l'application.
 
-Les identifiants utilisables sont retournés par `/foods`. Exemples : `pomme`, `banane`, `brocoli`, `epinard`, `riz`, `quinoa`, `patate-douce`, `poulet`, `saumon`. Le catalogue comprend aussi légumineuses, laitages, boissons végétales, noix et graines, matières grasses et condiments. L'avocat est classé comme légume pour l'usage culinaire ; patate douce et pomme de terre comme féculents.
+## Base locale
 
-## Générer les menus de la semaine
+Sur **Android, iOS et macOS**, `LocalRecipeRepository` utilise **SQLite via sqflite**. Le JSON embarqué est importé dans les tables `recipes`, `foods`, `recipe_foods`, `ingredient_lines` et `recipe_steps`. Les plans sont enregistrés dans `plans`. Le catalogue est mis à jour si le JSON change, sans effacer les plans.
 
-```bash
-curl -X POST http://127.0.0.1:8000/plans \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "days": 7,
-    "servings": 2,
-    "meal_types": ["dejeuner", "diner"],
-    "selected_foods": {
-      "fruit": ["pomme", "citron"],
-      "legume": ["brocoli", "epinard", "courgette"],
-      "feculent": ["riz", "quinoa", "patate-douce"]
-    },
-    "selection_mode": "prefer",
-    "excluded_foods": ["porc", "jambon", "bacon", "saucisse", "salami"],
-    "max_minutes": 45,
-    "max_repeats": 1,
-    "vegetarian": false,
-    "seed": 42
-  }'
-```
+Sur **web** et les plateformes sans cette implémentation SQLite, le catalogue reste dans les assets JSON et le dernier planning est sauvegardé avec `shared_preferences`. Il ne s'agit pas de SQLite dans le navigateur. La suppression des données du navigateur efface ce planning. Les coches de courses sont propres à la session et ne sont pas persistées.
 
-Les choix de fruits servent aussi à trouver les recettes salées contenant des fruits. Le planning n'ajoute pas automatiquement un fruit en dessert et ne modifie pas la recette d'origine.
+## Choix des aliments
 
-| Mode | Comportement |
+Un appui sur une pastille fait passer l'aliment par trois états : **préféré → exclu → neutre**. Les exclusions restent strictes quel que soit le mode. Les aliments secondaires explicitement nommés dans un ingrédient sont aussi pris en compte.
+
+| Mode | Règle |
 |---|---|
-| `prefer` | Les recettes contenant les aliments choisis sont mieux classées ; les autres restent disponibles. |
-| `require_selected` | Chaque recette doit contenir au moins un aliment choisi de **chaque groupe renseigné**. Choisir fruit + légume + féculent peut fortement restreindre le résultat. |
-| `only_selected` | Pour chaque groupe renseigné, aucun autre aliment du même groupe n'est permis. Les groupes non renseignés restent libres ; une recette peut ne pas contenir le groupe sélectionné. |
+| Privilégier mes choix | Favorise les recettes contenant les aliments choisis ; les autres restent possibles. |
+| Au moins un par groupe choisi | Chaque recette doit contenir au moins un aliment sélectionné de chaque groupe renseigné. |
+| Limiter chaque groupe à mes choix | Dans chaque groupe renseigné, les autres aliments sont interdits. Une recette peut ne pas contenir ce groupe. Les groupes non renseignés restent libres. |
 
-Les exclusions, la durée maximale, le filtre végétarien et le nombre maximal de répétitions s'appliquent dans tous les modes. Aucun n'est assoupli automatiquement. Le planning par défaut comprend 7 jours, 2 personnes, déjeuners et dîners et au plus une occurrence de chaque recette.
+Les recettes sont sélectionnées selon leurs types de repas source ; les salades sont disponibles aux deux repas. Un même `seed` et un même catalogue produisent les mêmes repas. Le moteur ne relâche jamais les exclusions, la durée ou la limite de répétitions pour remplir la semaine.
 
-La réponse contient un identifiant de planning, les repas, les URL des photos, les aliments choisis retrouvés et la liste de courses. `complete=false` et `unfilled_slots` indiquent les créneaux impossibles à remplir. Un résultat partiel est enregistré comme tel. Le même `seed` et le même catalogue produisent les mêmes repas, avec un nouvel identifiant de planning.
+Les fruits choisis servent à trouver les recettes qui en contiennent. L'application n'ajoute pas automatiquement de dessert. Le filtre végétarien vérifie les aliments explicitement nommés ; la composition des marques et les ingrédients implicites restent à relire. Exclure `porc` ne supprime pas automatiquement `jambon`, `bacon`, `saucisse` ou `salami` : sélectionner aussi ces identifiants si nécessaire.
 
-```bash
-curl http://127.0.0.1:8000/plans/IDENTIFIANT
-curl http://127.0.0.1:8000/plans/IDENTIFIANT/shopping-list
-```
+## Quantités et provenance
 
-Les recettes « Déjeuner » sont proposées au déjeuner, les recettes « Dîner » au dîner et les salades aux deux. Boissons, petits-déjeuners, vinaigrettes et collations ne remplacent pas ces repas. Les variantes sont consultatives et ne sont jamais substituées silencieusement aux ingrédients.
+Les quantités numériques sont multipliées par `personnes demandées / portions source`. Seules des descriptions identiques (sans distinction majuscule/minuscule) et une même unité sont regroupées. Aucune conversion de cuillères vers grammes n'est inventée. Riz sec/cuit, saumon frais/fumé, boîtes/grammes restent séparés. Les plages et quantités imprécises sont listées à part.
 
-## Liste de courses et portions
+Source : *Bible minceur*, Hugo Blanc, PDF fourni de **261 pages**. Import : **146 recettes, 146 photos et 1 231 lignes d'ingrédients**. Les pages imprimées et PDF sont conservées. Chaque recette porte `review_status=needs_review` : l'extraction, la classification, les variantes et les associations de photos nécessitent une relecture humaine. Les calories sont celles du livre, non recalculées et non vérifiées ; elles ne définissent pas d'objectif nutritionnel.
 
-Les quantités numériques sont multipliées par `personnes demandées / portions de la recette`. Seules les lignes ayant la même description normalisée et la même unité sont fusionnées. Riz cuit et riz sec, saumon frais et saumon fumé ou boîtes et grammes restent séparés. Aucune conversion cuillère-vers-grammes n'est inventée.
+Une durée incluant une nuit au réfrigérateur reste inconnue et est exclue si un temps maximal est choisi. Les temps décomposés préparation/cuisson sont additionnés de façon conservatrice. Le détail des limites figure dans [docs-analysis.md](docs-analysis.md).
 
-Les quantités imprécises, les plages et les ingrédients non chiffrés figurent dans `manual_items`, avec leur texte source et le multiplicateur de portions. La liste est une aide à préparer les achats ; elle ne calcule pas le nombre exact de paquets ni les stocks déjà disponibles.
-
-## API
-
-| Méthode | Route | Usage |
-|---|---|---|
-| GET | `/health` | État de l'API et nombre de recettes |
-| GET | `/foods?group=fruit` | Identifiants d'aliments, groupes |
-| GET | `/recipes` | Recherche paginée |
-| GET | `/recipes/{id}` | Recette complète, étapes et provenance |
-| GET | `/photos/{id}.jpg` | Photo extraite du PDF |
-| POST | `/plans` | Génération et enregistrement d'un planning |
-| GET | `/plans/{id}` | Relecture d'un planning |
-| GET | `/plans/{id}/shopping-list` | Liste de courses enregistrée |
-| GET | `/openapi.json` | Contrat OpenAPI 3.1 |
-
-Filtres `/recipes` : `food_ids` séparés par virgules, `food_mode=any|all`, `exclude` (identifiants), `category`, `meal_type`, `max_minutes`, `q` (titre), `vegetarian=true|false`, `limit` (1–200, défaut 50), `offset` (défaut 0). Les identifiants d'aliments inconnus sont rejetés. Les corps invalides renvoient HTTP 400, les ressources inconnues 404, les créations de planning 201. Les filtres portent sur le texte des ingrédients, y compris les aliments secondaires explicitement nommés.
-
-## Structure et données
+## Architecture
 
 ```text
-app/                 API, sélection, SQLite et taxonomie
-scripts/import_pdf.py Importeur propre à cette édition
-data/recipes.json     Catalogue source exploitable sans SQLite
-data/photos/          Photos JPEG extraites, une par recette
-data/import-report.json Compteurs et empreinte SHA-256 du PDF
-docs/analysis.md      Analyse du PDF et limites
-docs/openapi.json     Contrat de l'API
-tests/                Tests de données, planning et HTTP
+lib/domain/recipe.dart           Modèles typés et décodage du catalogue
+lib/domain/planner.dart          Moteur Dart, contraintes, menus et courses
+lib/data/recipe_repository.dart  Interface repository, SQLite et stockage web
+lib/screens/                    Interface Flutter, catalogue, choix, menus, courses
+lib/main.dart                   Application et thème Material 3
+assets/data/                    Catalogue JSON et rapport d'extraction
+assets/photos/                  146 photos JPEG issues du PDF
+test/                           Tests métier et tests de widgets
+tool/validate_catalog.dart       Validation du catalogue en Dart
+bin/recipe_api.dart              API HTTP locale optionnelle, en Dart
+.github/workflows/flutter.yml   Analyse, tests et compilation web sur GitHub Actions
 ```
 
-SQLite contient les tables `recipes`, `foods`, `recipe_foods`, `ingredient_lines`, `steps`, `photos`, `meal_plans` et `planned_meals`. Les clés étrangères assurent les liens ; les photos restent sur disque. Un JSON de la recette complète conserve les champs source en complément des tables normalisées. Les étapes utilisent une position unique indépendante de la numérotation parfois répétée du livre.
-
-Les calories sont conservées avec `nutrition_source=book_unverified`. L'application n'applique pas les recommandations nutritionnelles du livre, ne définit pas d'objectif calorique et ne garantit aucun résultat de perte de poids. Le filtre végétarien est déduit des ingrédients nommés ; la composition des marques et les ingrédients implicites restent à vérifier. Les champs `allergens` sont des indications automatiques, pas une certification d'absence d'allergènes ; il n'existe pas de filtre « sans allergène » garanti.
-
-## Réimporter le PDF
-
-Le PDF n'est pas commité. Conserver une copie locale de cette édition puis :
+## Vérifications
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements-import.txt
-python scripts/import_pdf.py '/chemin/Bible-minceur.pdf'
-python -m app.database
+dart format lib test tool bin
+flutter analyze
+flutter test
+dart run tool/validate_catalog.dart
+dart run tool/test_api.dart
+flutter build web
 ```
 
-L'importeur utilise la table des matières, réunit les pages d'une recette, extrait les blocs d'ingrédients et d'étapes et sélectionne la plus grande photographie de la recette. Il attend cette édition de 261 pages ; il ne constitue pas un importeur générique. Les métadonnées de photos conservent la page et l'empreinte de chaque JPEG. Les variantes sont extraites au mieux des blocs identifiables et nécessitent une relecture.
+Validation effectuée : **17 tests Flutter réussis**, **11 vérifications API Dart réussies**, analyse sans problème et **compilation web réussie**. Les compilations natives Android/iOS/macOS n’ont pas été exécutées dans cet environnement.
 
-## Tests
+Les tests couvrent la semaine de 14 repas, les exclusions, les portions, les repas impossibles, les modes stricts, la reproductibilité, la sérialisation, les données et la navigation vers les menus/courses.
+
+## API Dart optionnelle
+
+Le moteur métier est également utilisable via une API locale Dart, sans Python. L'application Flutter fonctionne de manière autonome ; elle n'a pas besoin de cette API.
 
 ```bash
-python3 -m unittest discover -s tests -v
+dart run bin/recipe_api.dart
+curl http://127.0.0.1:8000/health
+curl 'http://127.0.0.1:8000/recipes?food_ids=brocoli,quinoa&food_mode=all'
+curl -X POST http://127.0.0.1:8000/plans \
+  -H 'Content-Type: application/json' \
+  -d '{"servings":2,"selected_foods":{"legume":["brocoli"],"feculent":["quinoa"]},"mode":"prefer"}'
 ```
 
-La suite vérifie le catalogue et les empreintes des 146 photos, les recettes sur deux pages, les durées combinées, les portions, la reproductibilité, les exclusions, les menus impossibles, la persistance, l'API et l'authentification optionnelle.
+Routes : `GET /health`, `GET /foods?group=fruit`, `GET /recipes`, `GET /recipes/{id}`, `GET /photos/{id}.jpg`, `POST /plans`, `GET /plans/{id}` et `GET /plans/{id}/shopping-list`. Filtres des recettes : `q`, `food_ids`, `food_mode=any|all`, `exclude`, `meal_type`, `max_minutes`, `vegetarian`, `limit` et `offset`. Le corps de génération accepte `days`, `servings`, `meal_types`, `selected_foods`, `excluded_foods`, `mode` (`prefer`, `requireSelected`, `onlySelected`), `max_minutes`, `vegetarian`, `max_repeats` et `seed`.
 
-## Configuration et Docker
+Les plans API sont enregistrés sous `local/plans/`, séparément des plans de l'application. Le serveur écoute uniquement sur `127.0.0.1`. Un port peut être passé en argument. `OUNJE_API_TOKEN` active un jeton `Authorization: Bearer ...`. Le service n'est pas un backend public multiutilisateur et ne synchronise pas les appareils.
 
-Variables : `MEAL_DATA_DIR` (catalogue et photos), `MEAL_DB_PATH` (base), `MEAL_API_TOKEN` (jeton optionnel, accès avec `Authorization: Bearer ...`). Les chemins par défaut sont dans `data/`. Le serveur écoute uniquement sur l'interface locale par défaut. C'est un service pour usage personnel ; il ne comprend ni comptes utilisateurs ni interface web ni authentification multiutilisateur.
+## Droits et suites possibles
 
-```bash
-docker build -t meal-planner .
-docker run --rm -p 127.0.0.1:8000:8000 \
-  -v meal-planner-state:/state meal-planner
-```
+Le dépôt doit rester **privé** : les textes et photos conservent les droits du livre fourni. Aucune licence de redistribution n'est attribuée à ces données. Le PDF original n'est pas inclus.
 
-La base des plannings est persistée dans le volume `/state`. Pour un accès distant, ajouter HTTPS, authentification et sauvegardes. La recette JSON et les photos doivent être sauvegardées avec la base. La construction et l'exécution Docker nécessitent Docker installé.
-
-## Droits sur les données et prochaines étapes
-
-**Ce dépôt doit rester privé.** Les textes et photos extraits restent des contenus du livre fourni, avec leurs droits d'origine ; aucune licence de redistribution ne leur est attribuée. Le code et les données sont distingués pour faciliter une future migration vers des recettes et photos autorisées. La publication d'un catalogue destiné à des tiers nécessite des droits adaptés.
-
-Suite proposée : relire les extractions, corriger les catégories et compositions ambiguës, ajouter favoris et stocks, remplacement d'un repas, desserts facultatifs, saisonnalité, puis interface web. Une migration vers Java/Spring et PostgreSQL est possible à partir du JSON, du schéma et du contrat API si ce stack est souhaité.
+Suites : relecture du catalogue, favoris, remplacement d'un repas, stocks, saisonnalité, desserts facultatifs, sauvegarde des courses et synchronisation entre appareils. Cette version fournit un moteur Dart local ; aucun backend distant ou déploiement public n'est configuré.
