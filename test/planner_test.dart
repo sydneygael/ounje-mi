@@ -214,6 +214,101 @@ void main() {
     );
     expect(reloaded.toJson(), plan.toJson());
   });
+  group('favoris', () {
+    // Une recette réservée au dîner : elle ne peut pas partir au déjeuner.
+    final dinnerOnly = recipes
+        .where(
+          (r) =>
+              r.mealTypes.contains('diner') &&
+              !r.mealTypes.contains('dejeuner') &&
+              planner.matches(r, PlanOptions()),
+        )
+        .toList();
+    String dinnerOf(MealPlan plan, int day) => plan.meals
+        .firstWhere((m) => m.day == day && m.mealType == 'diner')
+        .recipeId;
+
+    test('un favori est choisi à score égal', () {
+      final favorite = dinnerOnly.first.id;
+      for (var seed = 0; seed < 10; seed++) {
+        final plan = planner.generate(
+          recipes,
+          PlanOptions(days: 1, seed: seed, favoriteRecipes: {favorite}),
+        );
+        expect(dinnerOf(plan, 1), favorite);
+      }
+    });
+    test('un aliment préféré pèse plus qu\'un favori', () {
+      final favorite =
+          dinnerOnly.firstWhere((r) => !r.foodIds.contains('brocoli')).id;
+      expect(dinnerOnly.any((r) => r.foodIds.contains('brocoli')), isTrue);
+      final plan = planner.generate(
+        recipes,
+        PlanOptions(
+          days: 1,
+          favoriteRecipes: {favorite},
+          selectedFoods: {
+            'legume': {'brocoli'},
+          },
+        ),
+      );
+      final dinner = recipes.firstWhere((r) => r.id == dinnerOf(plan, 1));
+      expect(dinner.foodIds, contains('brocoli'));
+    });
+    test('un favori exclu n\'est jamais servi', () {
+      final chicken = recipes.firstWhere((r) => r.id == 'bm-176');
+      expect(chicken.foodIds, contains('poulet'));
+      final plan = planner.generate(
+        recipes,
+        PlanOptions(favoriteRecipes: {chicken.id}, excludedFoods: {'poulet'}),
+      );
+      expect(plan.meals.map((m) => m.recipeId), isNot(contains(chicken.id)));
+    });
+    test('un favori n\'est pas répété avant les autres recettes', () {
+      final favorite = dinnerOnly.first.id;
+      final plan = planner.generate(
+        recipes,
+        PlanOptions(maxRepeats: 2, favoriteRecipes: {favorite}),
+      );
+      expect(plan.meals.where((m) => m.recipeId == favorite).length, 1);
+    });
+    test('un favori inconnu est ignoré', () {
+      List<Map<String, dynamic>> meals(Set<String> favorites) => planner
+          .generate(recipes, PlanOptions(seed: 7, favoriteRecipes: favorites))
+          .meals
+          .map((m) => m.toJson())
+          .toList();
+      expect(meals({'imaginaire'}), meals({}));
+    });
+    test('les options sans favoris enregistrés se relisent', () {
+      final json = PlanOptions().toJson()..remove('favorite_recipes');
+      expect(PlanOptions.fromJson(json).favoriteRecipes, isEmpty);
+    });
+  });
+  test('semaine enregistrée sérialisable en JSON sans perte', () {
+    final week = SavedWeek(
+      id: 'w1',
+      name: 'Semaine rapide',
+      savedAt: DateTime.utc(2026, 10, 5),
+      plan: planner.generate(recipes, PlanOptions()),
+    );
+    final reloaded = SavedWeek.fromJson(
+      jsonDecode(jsonEncode(week.toJson())) as Map<String, dynamic>,
+    );
+    expect(reloaded.toJson(), week.toJson());
+  });
+  test('reconcile vide les créneaux des recettes retirées', () {
+    final plan = planner.generate(recipes, PlanOptions());
+    expect(identical(planner.reconcile(plan, recipes), plan), isTrue);
+    final removed = plan.meals.first;
+    final remaining = recipes.where((r) => r.id != removed.recipeId).toList();
+    expect(() => planner.shoppingList(plan, remaining), throwsStateError);
+    final reconciled = planner.reconcile(plan, remaining);
+    expect(reconciled.meals.length, 13);
+    expect(reconciled.unfilledSlots.single['day'], removed.day);
+    expect(reconciled.unfilledSlots.single['meal_type'], removed.mealType);
+    expect(planner.shoppingList(reconciled, remaining).items, isNotEmpty);
+  });
   test('recette sur deux pages et durée nocturne inconnue', () {
     expect(recipes.firstWhere((r) => r.id == 'bm-176').pdfPages, [177, 178]);
     expect(recipes.firstWhere((r) => r.id == 'bm-091').totalMinutes, isNull);

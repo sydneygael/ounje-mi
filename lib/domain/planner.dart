@@ -16,6 +16,7 @@ class PlanOptions {
     this.vegetarian = false,
     this.maxRepeats = 1,
     this.seed = 0,
+    this.favoriteRecipes = const {},
   });
   final int days;
   final int servings;
@@ -27,6 +28,7 @@ class PlanOptions {
   final bool vegetarian;
   final int maxRepeats;
   final int seed;
+  final Set<String> favoriteRecipes;
   Map<String, dynamic> toJson() => {
         'days': days,
         'servings': servings,
@@ -40,6 +42,7 @@ class PlanOptions {
         'vegetarian': vegetarian,
         'max_repeats': maxRepeats,
         'seed': seed,
+        'favorite_recipes': favoriteRecipes.toList()..sort(),
       };
   factory PlanOptions.fromJson(Map<String, dynamic> json) => PlanOptions(
         days: json['days'] as int,
@@ -54,6 +57,10 @@ class PlanOptions {
         vegetarian: json['vegetarian'] as bool,
         maxRepeats: json['max_repeats'] as int,
         seed: json['seed'] as int,
+        // Clé absente des plannings enregistrés avant l'ajout des favoris.
+        favoriteRecipes: Set<String>.from(
+          json['favorite_recipes'] as List? ?? const [],
+        ),
       );
 }
 
@@ -114,6 +121,31 @@ class MealPlan {
             .map((m) => Map<String, dynamic>.from(m as Map))
             .toList(),
         createdAt: DateTime.parse(j['created_at'] as String),
+      );
+}
+
+class SavedWeek {
+  const SavedWeek({
+    required this.id,
+    required this.name,
+    required this.savedAt,
+    required this.plan,
+  });
+  final String id;
+  final String name;
+  final DateTime savedAt;
+  final MealPlan plan;
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'saved_at': savedAt.toIso8601String(),
+        'plan': plan.toJson(),
+      };
+  factory SavedWeek.fromJson(Map<String, dynamic> j) => SavedWeek(
+        id: j['id'] as String,
+        name: j['name'] as String,
+        savedAt: DateTime.parse(j['saved_at'] as String),
+        plan: MealPlan.fromJson(Map<String, dynamic>.from(j['plan'] as Map)),
       );
 }
 
@@ -243,8 +275,11 @@ class WeeklyPlanner {
           });
           continue;
         }
+        // Le bonus favori reste sous le poids d'un aliment préféré (10) et
+        // sous la pénalité de répétition (3).
         int score(Recipe r) =>
-            r.foodIds.intersection(preferred).length * 10 -
+            r.foodIds.intersection(preferred).length * 10 +
+            (options.favoriteRecipes.contains(r.id) ? 2 : 0) -
             (used[r.id] ?? 0) * 3;
         var best = candidates.first;
         for (final r in candidates.skip(1)) {
@@ -268,6 +303,33 @@ class WeeklyPlanner {
       meals: meals,
       unfilledSlots: missing,
       createdAt: now,
+    );
+  }
+
+  /// Retire les repas dont la recette n'est plus utilisable dans le catalogue
+  /// et les signale comme créneaux vides.
+  MealPlan reconcile(MealPlan plan, List<Recipe> recipes) {
+    final usable = {
+      for (final recipe in recipes)
+        if (recipe.servings != null) recipe.id,
+    };
+    final kept = plan.meals.where((m) => usable.contains(m.recipeId)).toList();
+    if (kept.length == plan.meals.length) return plan;
+    return MealPlan(
+      id: plan.id,
+      options: plan.options,
+      meals: kept,
+      unfilledSlots: [
+        ...plan.unfilledSlots,
+        for (final meal in plan.meals)
+          if (!usable.contains(meal.recipeId))
+            {
+              'day': meal.day,
+              'meal_type': meal.mealType,
+              'reason': 'Recette retirée du catalogue.',
+            },
+      ],
+      createdAt: plan.createdAt,
     );
   }
 
