@@ -20,6 +20,43 @@ class FakeRepository implements RecipeRepository {
   Future<void> savePlan(MealPlan plan) async {
     saved = plan;
   }
+
+  final favorites = <String>{};
+  final weeks = <SavedWeek>[];
+  @override
+  Future<Set<String>> loadFavorites() async => {...favorites};
+  @override
+  Future<void> setFavorite(String recipeId, bool favorite) async {
+    favorite ? favorites.add(recipeId) : favorites.remove(recipeId);
+  }
+
+  @override
+  Future<List<SavedWeek>> loadSavedWeeks() async =>
+      [...weeks]..sort((a, b) => b.savedAt.compareTo(a.savedAt));
+  @override
+  Future<void> saveWeek(SavedWeek week) async {
+    weeks
+      ..removeWhere((w) => w.id == week.id)
+      ..add(week);
+  }
+
+  @override
+  Future<void> renameWeek(String id, String name) async {
+    final index = weeks.indexWhere((w) => w.id == id);
+    if (index < 0) return;
+    final week = weeks[index];
+    weeks[index] = SavedWeek(
+      id: week.id,
+      name: name,
+      savedAt: week.savedAt,
+      plan: week.plan,
+    );
+  }
+
+  @override
+  Future<void> deleteWeek(String id) async {
+    weeks.removeWhere((w) => w.id == id);
+  }
 }
 
 void main() {
@@ -73,4 +110,16 @@ class FailingRepository implements RecipeRepository {
   Future<MealPlan?> loadPlan() async => null;
   @override
   Future<void> savePlan(MealPlan plan) async {}
+  @override
+  Future<Set<String>> loadFavorites() async => {};
+  @override
+  Future<void> setFavorite(String recipeId, bool favorite) async {}
+  @override
+  Future<List<SavedWeek>> loadSavedWeeks() async => [];
+  @override
+  Future<void> saveWeek(SavedWeek week) async {}
+  @override
+  Future<void> renameWeek(String id, String name) async {}
+  @override
+  Future<void> deleteWeek(String id) async {}
 }

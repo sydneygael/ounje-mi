@@ -12,6 +12,12 @@ abstract class RecipeRepository {
   Future<List<Recipe>> loadRecipes();
   Future<MealPlan?> loadPlan();
   Future<void> savePlan(MealPlan plan);
+  Future<Set<String>> loadFavorites();
+  Future<void> setFavorite(String recipeId, bool favorite);
+  Future<List<SavedWeek>> loadSavedWeeks();
+  Future<void> saveWeek(SavedWeek week);
+  Future<void> renameWeek(String id, String name);
+  Future<void> deleteWeek(String id);
 }
 
 class LocalRecipeRepository implements RecipeRepository {
@@ -32,9 +38,18 @@ class LocalRecipeRepository implements RecipeRepository {
       final directory = await getDatabasesPath();
       _db = await openDatabase(
         '$directory/ounje_mi.sqlite3',
-        version: 1,
+        version: 2,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys = ON');
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            await _createVersion2(db);
+            // La table plans ne garde désormais que la semaine courante.
+            await db.execute(
+              'DELETE FROM plans WHERE id NOT IN (SELECT id FROM plans ORDER BY created_at DESC LIMIT 1)',
+            );
+          }
         },
         onCreate: (db, version) async {
           await db.execute(
@@ -59,10 +74,40 @@ class LocalRecipeRepository implements RecipeRepository {
           await db.execute(
             'CREATE TABLE plans (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, payload TEXT NOT NULL)',
           );
+          await _createVersion2(db);
         },
       );
     } else if (!_useSqlite && _preferences == null) {
       _preferences = await SharedPreferences.getInstance();
+    }
+  }
+
+  Future<void> _createVersion2(Database db) async {
+    // Pas de clé étrangère vers recipes : le catalogue est vidé puis réimporté
+    // quand le JSON change, et les favoris doivent y survivre.
+    await db.execute('CREATE TABLE favorites (recipe_id TEXT PRIMARY KEY)');
+    await db.execute(
+      'CREATE TABLE saved_weeks (id TEXT PRIMARY KEY, name TEXT NOT NULL, saved_at TEXT NOT NULL, payload TEXT NOT NULL)',
+    );
+  }
+
+  List<dynamic> _webWeeks() {
+    final json = _preferences!.getString('ounje_mi_saved_weeks');
+    if (json == null) return [];
+    try {
+      final decoded = jsonDecode(json);
+      return decoded is List ? decoded : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> _writeWebWeeks(List<dynamic> weeks) async {
+    if (!await _preferences!.setString(
+      'ounje_mi_saved_weeks',
+      jsonEncode(weeks),
+    )) {
+      throw StateError('La sauvegarde locale a échoué.');
     }
   }
 
@@ -175,19 +220,147 @@ class LocalRecipeRepository implements RecipeRepository {
     await _initialize();
     final payload = jsonEncode(plan.toJson());
     if (_useSqlite) {
-      await _db!.insert(
-          'plans',
-          {
-            'id': plan.id,
-            'created_at': plan.createdAt.toIso8601String(),
-            'payload': payload,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace);
+      await _db!.transaction((txn) async {
+        await txn.delete('plans');
+        await txn.insert('plans', {
+          'id': plan.id,
+          'created_at': plan.createdAt.toIso8601String(),
+          'payload': payload,
+        });
+      });
     } else if (!await _preferences!.setString(
       'ounje_mi_latest_plan',
       payload,
     )) {
       throw StateError('La sauvegarde locale a échoué.');
+    }
+  }
+
+  @override
+  Future<Set<String>> loadFavorites() async {
+    await _initialize();
+    if (!_useSqlite) {
+      return (_preferences!.getStringList('ounje_mi_favorites') ?? []).toSet();
+    }
+    final rows = await _db!.query('favorites');
+    return rows.map((r) => r['recipe_id'] as String).toSet();
+  }
+
+  @override
+  Future<void> setFavorite(String recipeId, bool favorite) async {
+    await _initialize();
+    if (_useSqlite) {
+      if (favorite) {
+        await _db!.insert(
+            'favorites',
+            {
+              'recipe_id': recipeId,
+            },
+            conflictAlgorithm: ConflictAlgorithm.ignore);
+      } else {
+        await _db!.delete(
+          'favorites',
+          where: 'recipe_id = ?',
+          whereArgs: [recipeId],
+        );
+      }
+      return;
+    }
+    final favorites =
+        (_preferences!.getStringList('ounje_mi_favorites') ?? []).toSet();
+    if (favorite) {
+      favorites.add(recipeId);
+    } else {
+      favorites.remove(recipeId);
+    }
+    if (!await _preferences!.setStringList(
+      'ounje_mi_favorites',
+      favorites.toList()..sort(),
+    )) {
+      throw StateError('La sauvegarde locale a échoué.');
+    }
+  }
+
+  @override
+  Future<List<SavedWeek>> loadSavedWeeks() async {
+    await _initialize();
+    final weeks = <SavedWeek>[];
+    if (_useSqlite) {
+      for (final row in await _db!.query('saved_weeks')) {
+        // Une semaine illisible est ignorée sans faire échouer la liste.
+        try {
+          weeks.add(
+            SavedWeek(
+              id: row['id'] as String,
+              name: row['name'] as String,
+              savedAt: DateTime.parse(row['saved_at'] as String),
+              plan: MealPlan.fromJson(
+                jsonDecode(row['payload'] as String) as Map<String, dynamic>,
+              ),
+            ),
+          );
+        } catch (_) {}
+      }
+    } else {
+      for (final entry in _webWeeks()) {
+        try {
+          weeks.add(
+            SavedWeek.fromJson(Map<String, dynamic>.from(entry as Map)),
+          );
+        } catch (_) {}
+      }
+    }
+    return weeks..sort((a, b) => b.savedAt.compareTo(a.savedAt));
+  }
+
+  @override
+  Future<void> saveWeek(SavedWeek week) async {
+    await _initialize();
+    if (_useSqlite) {
+      await _db!.insert(
+          'saved_weeks',
+          {
+            'id': week.id,
+            'name': week.name,
+            'saved_at': week.savedAt.toIso8601String(),
+            'payload': jsonEncode(week.plan.toJson()),
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    } else {
+      await _writeWebWeeks([
+        ..._webWeeks().where((e) => e is! Map || e['id'] != week.id),
+        week.toJson(),
+      ]);
+    }
+  }
+
+  @override
+  Future<void> renameWeek(String id, String name) async {
+    await _initialize();
+    if (_useSqlite) {
+      await _db!.update(
+        'saved_weeks',
+        {'name': name},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    } else {
+      await _writeWebWeeks([
+        for (final e in _webWeeks())
+          e is Map && e['id'] == id ? {...e, 'name': name} : e,
+      ]);
+    }
+  }
+
+  @override
+  Future<void> deleteWeek(String id) async {
+    await _initialize();
+    if (_useSqlite) {
+      await _db!.delete('saved_weeks', where: 'id = ?', whereArgs: [id]);
+    } else {
+      await _writeWebWeeks(
+        _webWeeks().where((e) => e is! Map || e['id'] != id).toList(),
+      );
     }
   }
 }
