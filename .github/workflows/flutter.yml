@@ -1,0 +1,24 @@
+name: Flutter checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter --disable-analytics
+      - run: flutter pub get
+      - run: dart format --output=none --set-exit-if-changed lib test tool bin
+      - run: flutter analyze
+      - run: flutter test
+      - run: dart run tool/validate_catalog.dart
+      - run: dart run tool/test_api.dart
+      - run: flutter build web

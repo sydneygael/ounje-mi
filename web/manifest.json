@@ -1,0 +1,10 @@
+{
+  "name": "Ounjé Mi",
+  "short_name": "Ounjé Mi",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#F8F7F2",
+  "theme_color": "#315F42",
+  "description": "Recettes illustrées et planning hebdomadaire.",
+  "lang": "fr"
+}

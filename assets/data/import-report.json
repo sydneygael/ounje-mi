@@ -1,0 +1,22 @@
+{
+  "recipe_count": 146,
+  "categories": {
+    "petit_dejeuner": 24,
+    "boisson": 7,
+    "dejeuner": 24,
+    "salade": 19,
+    "vinaigrette": 6,
+    "diner": 56,
+    "collation": 10
+  },
+  "photos": 146,
+  "ingredient_lines": 1231,
+  "flags": {
+    "unquantified_overnight_wait": 1,
+    "summed_time_components": 13,
+    "source_step_numbering": 6
+  },
+  "source_sha256": "549f8cd2949ab16a23958132861a8183c82418f6153d176e1675dd349aba6107",
+  "source_pdf_pages": 261,
+  "extraction": "automatic; human review required"
+}

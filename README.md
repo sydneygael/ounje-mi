@@ -43,7 +43,7 @@ Un appui sur une pastille fait passer l'aliment par trois états : **préféré 
 
 Les recettes sont sélectionnées selon leurs types de repas source ; les salades sont disponibles aux deux repas. Un même `seed` et un même catalogue produisent les mêmes repas. Le moteur ne relâche jamais les exclusions, la durée ou la limite de répétitions pour remplir la semaine.
 
-Les fruits choisis servent à trouver les recettes qui en contiennent. L'application n'ajoute pas automatiquement de dessert. Le filtre végétarien vérifie les aliments explicitement nommés ; la composition des marques et les ingrédients implicites restent à relire. Exclure `porc` ne supprime pas automatiquement `jambon`, `bacon`, `saucisse` ou `salami` : sélectionner aussi ces identifiants si nécessaire.
+Les fruits choisis servent à trouver les recettes qui en contiennent. L'application n'ajoute pas automatiquement de dessert. Le filtre végétarien autorise les œufs et les laitages et vérifie les aliments explicitement nommés ; la composition des marques et les ingrédients implicites restent à relire. Exclure `porc` ne supprime pas automatiquement `jambon`, `bacon`, `saucisse` ou `salami` : sélectionner aussi ces identifiants si nécessaire.
 
 ## Quantités et provenance
 
@@ -80,7 +80,7 @@ dart run tool/test_api.dart
 flutter build web
 ```
 
-Validation effectuée : **17 tests Flutter réussis**, **11 vérifications API Dart réussies**, analyse sans problème et **compilation web réussie**. Les compilations natives Android/iOS/macOS n’ont pas été exécutées dans cet environnement.
+Validation effectuée : **19 tests Flutter réussis**, **11 vérifications API Dart réussies**, analyse sans problème et **compilation web réussie**. Les compilations natives Android/iOS/macOS n’ont pas été exécutées dans cet environnement.
 
 Les tests couvrent la semaine de 14 repas, les exclusions, les portions, les repas impossibles, les modes stricts, la reproductibilité, la sérialisation, les données et la navigation vers les menus/courses.
 
