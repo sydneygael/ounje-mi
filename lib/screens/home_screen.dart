@@ -33,6 +33,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final selected = <String, Set<String>>{};
   final excluded = <String>{};
   final checked = <String>{};
+  final favorites = <String>{};
+  bool favoritesOnly = false;
 
   @override
   void initState() {
@@ -48,11 +50,15 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final loaded = await widget.repository.loadRecipes();
       final saved = await widget.repository.loadPlan();
+      final savedFavorites = await widget.repository.loadFavorites();
       if (!mounted) return;
       setState(() {
         recipes = loaded;
         plan = saved;
         loading = false;
+        favorites
+          ..clear()
+          ..addAll(savedFavorites);
         if (saved != null) {
           servings = saved.options.servings;
           maxMinutes = saved.options.maxMinutes;
@@ -89,7 +95,30 @@ class _HomeScreenState extends State<HomeScreen> {
         mode: mode,
         selectedFoods: selected.map((k, v) => MapEntry(k, Set<String>.from(v))),
         excludedFoods: Set<String>.from(excluded),
+        favoriteRecipes: Set<String>.from(favorites),
       );
+
+  /// Bascule un favori et renvoie son état réel après la sauvegarde.
+  Future<bool> _toggleFavorite(String recipeId) async {
+    final value = !favorites.contains(recipeId);
+    setState(
+      () => value ? favorites.add(recipeId) : favorites.remove(recipeId),
+    );
+    try {
+      await widget.repository.setFavorite(recipeId, value);
+      return value;
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => value ? favorites.remove(recipeId) : favorites.add(recipeId),
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Favori non enregistré : $e')),
+        );
+      }
+      return !value;
+    }
+  }
 
   Future<void> _generate() async {
     setState(() => saving = true);
@@ -116,8 +145,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _open(Recipe recipe, {int? portions}) => Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (context) =>
-              RecipeScreen(recipe: recipe, initialServings: portions),
+          builder: (context) => RecipeScreen(
+            recipe: recipe,
+            initialServings: portions,
+            favorite: favorites.contains(recipe.id),
+            onToggleFavorite: () => _toggleFavorite(recipe.id),
+          ),
         ),
       );
 
@@ -204,7 +237,10 @@ class _HomeScreenState extends State<HomeScreen> {
         .where(
           (r) =>
               r.title.toLowerCase().contains(search.toLowerCase()) &&
-              planner.matches(r, options),
+              // Le filtre favoris ignore « Mes choix » pour ne rien cacher.
+              (favoritesOnly
+                  ? favorites.contains(r.id)
+                  : planner.matches(r, options)),
         )
         .toList();
     shown.sort((a, b) {
@@ -232,7 +268,18 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Row(
             children: [
               Expanded(
-                child: Text('${shown.length} recettes · selon mes choix'),
+                child: Text(
+                  favoritesOnly
+                      ? shown.length == 1
+                          ? '1 favori'
+                          : '${shown.length} favoris'
+                      : '${shown.length} recettes · selon mes choix',
+                ),
+              ),
+              FilterChip(
+                label: const Text('Favoris'),
+                selected: favoritesOnly,
+                onSelected: (v) => setState(() => favoritesOnly = v),
               ),
               TextButton(
                 onPressed: () => setState(() => tab = 1),
@@ -243,8 +290,18 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         Expanded(
           child: shown.isEmpty
-              ? const Center(
-                  child: Text('Aucune recette ne correspond à ces choix.'),
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      !favoritesOnly
+                          ? 'Aucune recette ne correspond à ces choix.'
+                          : favorites.isEmpty
+                              ? 'Aucun favori pour l\'instant. Touche le cœur d\'une recette pour l\'ajouter.'
+                              : 'Aucun favori ne correspond à cette recherche.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
                 )
               : LayoutBuilder(
                   builder: (context, constraints) {
@@ -271,17 +328,38 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Image.asset(
-                                  recipe.photoAsset,
-                                  height: 180,
-                                  width: double.infinity,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (c, e, s) => const SizedBox(
-                                    height: 180,
-                                    child: Center(
-                                      child: Icon(Icons.restaurant, size: 50),
+                                Stack(
+                                  children: [
+                                    Image.asset(
+                                      recipe.photoAsset,
+                                      height: 180,
+                                      width: double.infinity,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (c, e, s) => const SizedBox(
+                                        height: 180,
+                                        child: Center(
+                                          child:
+                                              Icon(Icons.restaurant, size: 50),
+                                        ),
+                                      ),
                                     ),
-                                  ),
+                                    Positioned(
+                                      top: 8,
+                                      right: 8,
+                                      child: IconButton.filledTonal(
+                                        tooltip: favorites.contains(recipe.id)
+                                            ? 'Retirer des favoris'
+                                            : 'Ajouter aux favoris',
+                                        icon: Icon(
+                                          favorites.contains(recipe.id)
+                                              ? Icons.favorite
+                                              : Icons.favorite_border,
+                                        ),
+                                        onPressed: () =>
+                                            _toggleFavorite(recipe.id),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                                 Padding(
                                   padding: const EdgeInsets.all(12),

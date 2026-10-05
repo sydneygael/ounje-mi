@@ -9,19 +9,37 @@ const _qualityNotes = {
 };
 
 class RecipeScreen extends StatefulWidget {
-  const RecipeScreen({super.key, required this.recipe, this.initialServings});
+  const RecipeScreen({
+    super.key,
+    required this.recipe,
+    this.initialServings,
+    this.favorite = false,
+    this.onToggleFavorite,
+  });
   final Recipe recipe;
   final int? initialServings;
+  final bool favorite;
+
+  /// Bascule le favori et renvoie son état réel après la sauvegarde.
+  final Future<bool> Function()? onToggleFavorite;
   @override
   State<RecipeScreen> createState() => _RecipeScreenState();
 }
 
 class _RecipeScreenState extends State<RecipeScreen> {
   late int servings;
+  late bool favorite;
   @override
   void initState() {
     super.initState();
     servings = widget.initialServings ?? widget.recipe.servings ?? 2;
+    favorite = widget.favorite;
+  }
+
+  Future<void> _toggleFavorite() async {
+    setState(() => favorite = !favorite);
+    final actual = await widget.onToggleFavorite!();
+    if (mounted && actual != favorite) setState(() => favorite = actual);
   }
 
   @override
@@ -29,7 +47,17 @@ class _RecipeScreenState extends State<RecipeScreen> {
     final r = widget.recipe;
     final scale = servings / (r.servings ?? servings);
     return Scaffold(
-      appBar: AppBar(title: Text(r.title)),
+      appBar: AppBar(
+        title: Text(r.title),
+        actions: [
+          if (widget.onToggleFavorite != null)
+            IconButton(
+              tooltip: favorite ? 'Retirer des favoris' : 'Ajouter aux favoris',
+              icon: Icon(favorite ? Icons.favorite : Icons.favorite_border),
+              onPressed: _toggleFavorite,
+            ),
+        ],
+      ),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 850),
