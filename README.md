@@ -8,6 +8,8 @@ Application **Flutter**, logique métier **Dart**, catalogue de recettes illustr
 - **Mes choix** : aliments préférés/exclus, nombre de personnes, temps maximal, végétarien et répétitions.
 - **Ma semaine** : 7 déjeuners et 7 dîners ; les créneaux impossibles restent explicitement vides.
 - **Courses** : ingrédients regroupés, quantités ajustées aux portions, lignes imprécises à adapter, cases à cocher et copie de la liste.
+- **Favoris** : un cœur sur les cartes et les fiches, un filtre « Favoris » dans le catalogue (il ignore « Mes choix ») et un bonus dans le moteur ; les exclusions et contraintes restent strictes.
+- **Mes semaines** : une semaine peut être enregistrée sous un nom, puis réutilisée comme semaine courante, renommée ou supprimée.
 - Sauvegarde locale du dernier planning et restauration au démarrage ; export JSON par copie.
 
 ## Démarrage
@@ -27,9 +29,9 @@ iOS et macOS nécessitent macOS et Xcode ; Android nécessite le SDK Android et 
 
 ## Base locale
 
-Sur **Android, iOS et macOS**, `LocalRecipeRepository` utilise **SQLite via sqflite**. Le JSON embarqué est importé dans les tables `recipes`, `foods`, `recipe_foods`, `ingredient_lines` et `recipe_steps`. Les plans sont enregistrés dans `plans`. Le catalogue est mis à jour si le JSON change, sans effacer les plans.
+Sur **Android, iOS et macOS**, `LocalRecipeRepository` utilise **SQLite via sqflite**. Le JSON embarqué est importé dans les tables `recipes`, `foods`, `recipe_foods`, `ingredient_lines` et `recipe_steps`. La table `plans` ne contient que la semaine courante ; les favoris sont dans `favorites` et les semaines nommées dans `saved_weeks` (base en version 2, migration automatique depuis la version 1). Le catalogue est mis à jour si le JSON change, sans effacer la semaine courante, les favoris ni les semaines enregistrées. Un repas dont la recette a disparu du catalogue devient un créneau vide signalé.
 
-Sur **web** et les plateformes sans cette implémentation SQLite, le catalogue reste dans les assets JSON et le dernier planning est sauvegardé avec `shared_preferences`. Il ne s'agit pas de SQLite dans le navigateur. La suppression des données du navigateur efface ce planning. Les coches de courses sont propres à la session et ne sont pas persistées.
+Sur **web** et les plateformes sans cette implémentation SQLite, le catalogue reste dans les assets JSON ; le dernier planning, les favoris et les semaines enregistrées sont sauvegardés avec `shared_preferences`. Il ne s'agit pas de SQLite dans le navigateur. La suppression des données du navigateur efface ce planning. Les coches de courses sont propres à la session et ne sont pas persistées.
 
 ## Choix des aliments
 
@@ -41,7 +43,7 @@ Un appui sur une pastille fait passer l'aliment par trois états : **préféré 
 | Au moins un par groupe choisi | Chaque recette doit contenir au moins un aliment sélectionné de chaque groupe renseigné. |
 | Limiter chaque groupe à mes choix | Dans chaque groupe renseigné, les autres aliments sont interdits. Une recette peut ne pas contenir ce groupe. Les groupes non renseignés restent libres. |
 
-Les recettes sont sélectionnées selon leurs types de repas source ; les salades sont disponibles aux deux repas. Un même `seed` et un même catalogue produisent les mêmes repas. Le moteur ne relâche jamais les exclusions, la durée ou la limite de répétitions pour remplir la semaine.
+Les recettes sont sélectionnées selon leurs types de repas source ; les salades sont disponibles aux deux repas. Un même `seed`, les mêmes options (favoris compris) et un même catalogue produisent les mêmes repas. Une recette favorite reçoit un bonus inférieur au poids d'un aliment préféré et à la pénalité de répétition. Le moteur ne relâche jamais les exclusions, la durée ou la limite de répétitions pour remplir la semaine.
 
 Les fruits choisis servent à trouver les recettes qui en contiennent. L'application n'ajoute pas automatiquement de dessert. Le filtre végétarien autorise les œufs et les laitages et vérifie les aliments explicitement nommés ; la composition des marques et les ingrédients implicites restent à relire. Exclure `porc` ne supprime pas automatiquement `jambon`, `bacon`, `saucisse` ou `salami` : sélectionner aussi ces identifiants si nécessaire.
 
@@ -80,9 +82,9 @@ dart run tool/test_api.dart
 flutter build web
 ```
 
-Validation effectuée : **19 tests Flutter réussis**, **11 vérifications API Dart réussies**, analyse sans problème et **compilation web réussie**. Les compilations natives Android/iOS/macOS n’ont pas été exécutées dans cet environnement.
+Validation effectuée : **49 tests Flutter réussis**, **11 vérifications API Dart réussies**, analyse sans problème et **compilation web réussie**. Les compilations natives Android/iOS/macOS n’ont pas été exécutées dans cet environnement.
 
-Les tests couvrent la semaine de 14 repas, les exclusions, les portions, les repas impossibles, les modes stricts, la reproductibilité, la sérialisation, les données et la navigation vers les menus/courses.
+Les tests couvrent la semaine de 14 repas, les exclusions, les portions, les repas impossibles, les modes stricts, la reproductibilité, la sérialisation, les données, la navigation vers les menus/courses, les favoris, les semaines enregistrées et la migration SQLite (via `sqflite_common_ffi`).
 
 ## API Dart optionnelle
 
@@ -105,4 +107,4 @@ Les plans API sont enregistrés sous `local/plans/`, séparément des plans de l
 
 Le dépôt doit rester **privé** : les textes et photos conservent les droits du livre fourni. Aucune licence de redistribution n'est attribuée à ces données. Le PDF original n'est pas inclus.
 
-Suites : relecture du catalogue, favoris, remplacement d'un repas, stocks, saisonnalité, desserts facultatifs, sauvegarde des courses et synchronisation entre appareils. Cette version fournit un moteur Dart local ; aucun backend distant ou déploiement public n'est configuré.
+Suites : relecture du catalogue, remplacement d'un repas, stocks, saisonnalité, desserts facultatifs, sauvegarde des courses et synchronisation entre appareils. Cette version fournit un moteur Dart local ; aucun backend distant ou déploiement public n'est configuré.

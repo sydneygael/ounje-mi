@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import '../data/recipe_repository.dart';
 import '../domain/planner.dart';
 import '../domain/recipe.dart';
 import 'recipe_screen.dart';
+import 'saved_weeks_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.repository});
@@ -54,27 +56,13 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         recipes = loaded;
-        plan = saved;
+        // Le catalogue a pu être réimporté depuis la sauvegarde du planning.
+        plan = saved == null ? null : planner.reconcile(saved, loaded);
         loading = false;
         favorites
           ..clear()
           ..addAll(savedFavorites);
-        if (saved != null) {
-          servings = saved.options.servings;
-          maxMinutes = saved.options.maxMinutes;
-          maxRepeats = saved.options.maxRepeats;
-          vegetarian = saved.options.vegetarian;
-          seed = saved.options.seed + 1;
-          mode = saved.options.mode;
-          selected.clear();
-          selected.addAll(
-            saved.options.selectedFoods.map(
-              (k, v) => MapEntry(k, Set<String>.from(v)),
-            ),
-          );
-          excluded.clear();
-          excluded.addAll(saved.options.excludedFoods);
-        }
+        if (saved != null) _applyOptions(saved.options);
       });
     } catch (e) {
       if (mounted) {
@@ -82,6 +70,91 @@ class _HomeScreenState extends State<HomeScreen> {
           error = 'Chargement impossible : $e';
           loading = false;
         });
+      }
+    }
+  }
+
+  /// Recopie les options d'un planning dans le formulaire « Mes choix ».
+  void _applyOptions(PlanOptions saved) {
+    servings = saved.servings;
+    maxMinutes = saved.maxMinutes;
+    maxRepeats = saved.maxRepeats;
+    vegetarian = saved.vegetarian;
+    seed = saved.seed + 1;
+    mode = saved.mode;
+    selected.clear();
+    selected.addAll(
+      saved.selectedFoods.map((k, v) => MapEntry(k, Set<String>.from(v))),
+    );
+    excluded.clear();
+    excluded.addAll(saved.excludedFoods);
+  }
+
+  String _newId(DateTime now) =>
+      '${now.microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 30)}';
+
+  Future<void> _saveWeek(MealPlan current) async {
+    final name = await askWeekName(
+      context,
+      title: 'Enregistrer cette semaine',
+      initial: 'Semaine du ${frenchDate(current.createdAt)}',
+    );
+    if (name == null) return;
+    try {
+      final now = DateTime.now().toUtc();
+      await widget.repository.saveWeek(
+        SavedWeek(id: _newId(now), name: name, savedAt: now, plan: current),
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('« $name » enregistrée dans Mes semaines.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Enregistrement impossible : $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _openWeeks() async {
+    final week = await Navigator.of(context).push(
+      MaterialPageRoute<SavedWeek>(
+        builder: (context) => SavedWeeksScreen(
+          repository: widget.repository,
+          recipes: recipes,
+        ),
+      ),
+    );
+    if (week == null) return;
+    try {
+      final now = DateTime.now().toUtc();
+      // Copie sous un nouvel identifiant : le modèle reste intact.
+      final reused = planner.reconcile(
+        MealPlan(
+          id: _newId(now),
+          options: week.plan.options,
+          meals: week.plan.meals,
+          unfilledSlots: week.plan.unfilledSlots,
+          createdAt: now,
+        ),
+        recipes,
+      );
+      await widget.repository.savePlan(reused);
+      if (!mounted) return;
+      setState(() {
+        plan = reused;
+        checked.clear();
+        _applyOptions(reused.options);
+        tab = 2;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Réutilisation impossible : $e')),
+        );
       }
     }
   }
@@ -594,6 +667,11 @@ class _HomeScreenState extends State<HomeScreen> {
         'Choisis tes aliments puis génère tes repas.',
         () => setState(() => tab = 1),
         'Choisir mes aliments',
+        secondary: TextButton.icon(
+          onPressed: _openWeeks,
+          icon: const Icon(Icons.bookmarks_outlined),
+          label: const Text('Mes semaines'),
+        ),
       );
     }
     final index = {for (final r in recipes) r.id: r};
@@ -618,6 +696,16 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () => setState(() => tab = 3),
               icon: const Icon(Icons.shopping_basket_outlined),
               label: const Text('Voir les courses'),
+            ),
+            TextButton.icon(
+              onPressed: () => _saveWeek(saved),
+              icon: const Icon(Icons.bookmark_add_outlined),
+              label: const Text('Enregistrer cette semaine'),
+            ),
+            TextButton.icon(
+              onPressed: _openWeeks,
+              icon: const Icon(Icons.bookmarks_outlined),
+              label: const Text('Mes semaines'),
             ),
             TextButton.icon(
               onPressed: () async {
@@ -669,8 +757,16 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: ListTile(
                         leading: const Icon(Icons.event_busy),
                         title: Text(mealLabels[type] ?? type),
-                        subtitle: const Text(
-                          'Aucune recette disponible pour ce créneau.',
+                        subtitle: Text(
+                          saved.unfilledSlots
+                                  .where(
+                                    (s) =>
+                                        s['day'] == day &&
+                                        s['meal_type'] == type,
+                                  )
+                                  .map((s) => s['reason'] as String?)
+                                  .firstOrNull ??
+                              'Aucune recette disponible pour ce créneau.',
                         ),
                       ),
                     );
@@ -793,7 +889,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _empty(String title, String text, VoidCallback action, String label) =>
+  Widget _empty(
+    String title,
+    String text,
+    VoidCallback action,
+    String label, {
+    Widget? secondary,
+  }) =>
       Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -811,6 +913,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Text(text, textAlign: TextAlign.center),
               const SizedBox(height: 20),
               FilledButton(onPressed: action, child: Text(label)),
+              if (secondary != null) ...[const SizedBox(height: 8), secondary],
             ],
           ),
         ),

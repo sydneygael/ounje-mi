@@ -104,6 +104,179 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  group('semaines enregistrées', () {
+    const planner = WeeklyPlanner();
+    SavedWeek model(FakeRepository repository, {String? missingRecipe}) {
+      final plan = planner.generate(repository.recipes, PlanOptions(seed: 5));
+      return SavedWeek(
+        id: 'modèle',
+        name: 'Semaine rapide',
+        // Midi UTC : la date affichée ne dépend pas du fuseau de la machine.
+        savedAt: DateTime.utc(2026, 10, 1, 12),
+        plan: missingRecipe == null
+            ? plan
+            : MealPlan(
+                id: plan.id,
+                options: plan.options,
+                unfilledSlots: plan.unfilledSlots,
+                createdAt: plan.createdAt,
+                meals: [
+                  PlannedMeal(
+                    day: 1,
+                    mealType: plan.meals.first.mealType,
+                    recipeId: missingRecipe,
+                    servings: 2,
+                  ),
+                  ...plan.meals.skip(1),
+                ],
+              ),
+      );
+    }
+
+    Future<void> openWeeks(WidgetTester tester, RecipeRepository r) async {
+      await tester.pumpWidget(OunjeMiApp(repository: r));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ma semaine'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Mes semaines'));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> choose(WidgetTester tester, String action) async {
+      await tester.tap(find.byTooltip('Actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(action));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('enregistrer demande un nom non vide', (tester) async {
+      final repository = FakeRepository();
+      repository.saved = planner.generate(repository.recipes, PlanOptions());
+      await tester.pumpWidget(OunjeMiApp(repository: repository));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ma semaine'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Enregistrer cette semaine'));
+      await tester.pumpAndSettle();
+      final save = find.widgetWithText(FilledButton, 'Enregistrer');
+      expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+      await tester.enterText(find.byType(TextField), '   ');
+      await tester.pump();
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
+      await tester.enterText(find.byType(TextField), ' Semaine rapide ');
+      await tester.pump();
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(repository.weeks.single.name, 'Semaine rapide');
+      expect(
+        repository.weeks.single.plan.toJson(),
+        repository.saved!.toJson(),
+      );
+      expect(tester.takeException(), isNull);
+    });
+    testWidgets('réutiliser remplace la semaine et garde le modèle',
+        (tester) async {
+      final repository = FakeRepository();
+      final week = model(repository);
+      repository.weeks.add(week);
+      repository.saved = planner.generate(repository.recipes, PlanOptions());
+      await openWeeks(tester, repository);
+      await choose(tester, 'Réutiliser');
+      await tester.tap(find.widgetWithText(FilledButton, 'Réutiliser'));
+      await tester.pumpAndSettle();
+      expect(
+        repository.saved!.meals.map((m) => m.recipeId),
+        week.plan.meals.map((m) => m.recipeId),
+      );
+      expect(repository.saved!.id, isNot(week.plan.id));
+      expect(repository.weeks.single.plan.toJson(), week.plan.toJson());
+      expect(find.text('Nouvelle proposition'), findsOneWidget);
+      // La proposition suivante repart des réglages du modèle.
+      await tester.tap(find.text('Nouvelle proposition'));
+      await tester.pumpAndSettle();
+      expect(repository.saved!.options.seed, 6);
+    });
+    testWidgets('réutiliser depuis une semaine vide', (tester) async {
+      final repository = FakeRepository();
+      repository.weeks.add(model(repository));
+      await openWeeks(tester, repository);
+      await choose(tester, 'Réutiliser');
+      await tester.tap(find.widgetWithText(FilledButton, 'Réutiliser'));
+      await tester.pumpAndSettle();
+      expect(repository.saved?.meals.length, 14);
+    });
+    testWidgets('annuler la réutilisation ne change rien', (tester) async {
+      final repository = FakeRepository();
+      repository.weeks.add(model(repository));
+      await openWeeks(tester, repository);
+      await choose(tester, 'Réutiliser');
+      await tester.tap(find.text('Annuler'));
+      await tester.pumpAndSettle();
+      expect(repository.saved, isNull);
+      expect(find.text('Semaine rapide'), findsOneWidget);
+    });
+    testWidgets('renommer puis supprimer avec confirmation', (tester) async {
+      final repository = FakeRepository();
+      repository.weeks.add(model(repository));
+      await openWeeks(tester, repository);
+      expect(find.textContaining('1er octobre 2026 · 14/14'), findsOneWidget);
+      await choose(tester, 'Renommer');
+      await tester.enterText(find.byType(TextField), 'Semaine légère');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, 'Enregistrer'));
+      await tester.pumpAndSettle();
+      expect(repository.weeks.single.name, 'Semaine légère');
+      expect(find.text('Semaine légère'), findsOneWidget);
+      await choose(tester, 'Supprimer');
+      await tester.tap(find.widgetWithText(FilledButton, 'Supprimer'));
+      await tester.pumpAndSettle();
+      expect(repository.weeks, isEmpty);
+      expect(find.textContaining('Aucune semaine enregistrée'), findsOne);
+      expect(tester.takeException(), isNull);
+    });
+    testWidgets('une recette retirée est signalée puis écartée',
+        (tester) async {
+      final repository = FakeRepository();
+      repository.weeks.add(model(repository, missingRecipe: 'disparue'));
+      await openWeeks(tester, repository);
+      await tester.tap(find.text('Semaine rapide'));
+      await tester.pumpAndSettle();
+      expect(find.text('Recette retirée'), findsOneWidget);
+      await choose(tester, 'Réutiliser');
+      await tester.tap(find.widgetWithText(FilledButton, 'Réutiliser'));
+      await tester.pumpAndSettle();
+      expect(repository.saved!.meals.length, 13);
+      expect(repository.saved!.unfilledSlots.length, 1);
+      expect(find.text('Recette retirée du catalogue.'), findsOneWidget);
+      await tester.tap(find.text('Courses'));
+      await tester.pumpAndSettle();
+      expect(find.text('Mes courses'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+    testWidgets('planning courant avec une recette retirée', (tester) async {
+      final repository = FakeRepository();
+      repository.saved = model(repository, missingRecipe: 'disparue').plan;
+      await tester.pumpWidget(OunjeMiApp(repository: repository));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Courses'));
+      await tester.pumpAndSettle();
+      expect(find.text('Mes courses'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+    testWidgets('semaine et liste sans débordement sur téléphone',
+        (tester) async {
+      await tester.binding.setSurfaceSize(const Size(360, 740));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = FakeRepository();
+      repository.weeks.add(model(repository));
+      repository.saved = planner.generate(repository.recipes, PlanOptions());
+      await openWeeks(tester, repository);
+      await tester.tap(find.text('Semaine rapide'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   group('favoris', () {
     const planner = WeeklyPlanner();
     Finder card(String title) => find.descendant(
