@@ -4,15 +4,20 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../data/drive_backup_service.dart';
 import '../data/recipe_repository.dart';
 import '../domain/planner.dart';
 import '../domain/recipe.dart';
+import 'backup_screen.dart';
 import 'recipe_screen.dart';
 import 'saved_weeks_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.repository});
+  const HomeScreen({super.key, required this.repository, this.backupService});
   final RecipeRepository repository;
+
+  /// Absent quand la sauvegarde Google Drive n'est pas disponible.
+  final DriveBackupService? backupService;
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -159,6 +164,20 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _openBackup(DriveBackupService service) async {
+    final restored = await Navigator.of(context).push(
+      MaterialPageRoute<bool>(
+        builder: (context) => BackupScreen(
+          repository: widget.repository,
+          service: service,
+        ),
+      ),
+    );
+    if (restored != true || !mounted) return;
+    checked.clear();
+    await _load();
+  }
+
   PlanOptions get options => PlanOptions(
         servings: servings,
         maxMinutes: maxMinutes,
@@ -232,6 +251,12 @@ class _HomeScreenState extends State<HomeScreen> {
         appBar: AppBar(
           title: const Text('Ounjé Mi'),
           actions: [
+            if (widget.backupService case final service?)
+              IconButton(
+                tooltip: 'Sauvegarde',
+                icon: const Icon(Icons.cloud_outlined),
+                onPressed: () => _openBackup(service),
+              ),
             IconButton(
               tooltip: 'À propos des recettes',
               icon: const Icon(Icons.info_outline),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'data/drive_backup_service.dart';
 import 'data/recipe_repository.dart';
 import 'screens/home_screen.dart';
 
@@ -9,8 +10,9 @@ void main() {
 }
 
 class OunjeMiApp extends StatelessWidget {
-  const OunjeMiApp({super.key, required this.repository});
+  const OunjeMiApp({super.key, required this.repository, this.backupService});
   final RecipeRepository repository;
+  final DriveBackupService? backupService;
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'Ounjé Mi',
@@ -20,6 +22,9 @@ class OunjeMiApp extends StatelessWidget {
           colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF315F42)),
           scaffoldBackgroundColor: const Color(0xFFF8F7F2),
         ),
-        home: HomeScreen(repository: repository),
+        home: HomeScreen(
+          repository: repository,
+          backupService: backupService,
+        ),
       );
 }

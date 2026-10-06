@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ounje_mi/data/drive_backup_service.dart';
 import 'package:ounje_mi/data/recipe_repository.dart';
 import 'package:ounje_mi/domain/backup.dart';
 import 'package:ounje_mi/domain/planner.dart';
@@ -395,6 +396,271 @@ void main() {
       expect(repository.saved?.options.favoriteRecipes, {'bm-176'});
     });
   });
+
+  group('sauvegarde', () {
+    const planner = WeeklyPlanner();
+    Future<void> openBackup(
+      WidgetTester tester,
+      RecipeRepository repository,
+      FakeBackupService service,
+    ) async {
+      await tester.pumpWidget(
+        OunjeMiApp(repository: repository, backupService: service),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Sauvegarde'));
+      await tester.pumpAndSettle();
+    }
+
+    AppBackup remote(FakeRepository repository) {
+      final plan = planner.generate(repository.recipes, PlanOptions(seed: 7));
+      return AppBackup(
+        // Midi UTC : la date affichée ne dépend pas du fuseau de la machine.
+        savedAt: DateTime.utc(2026, 10, 5, 12),
+        plan: plan,
+        favorites: {'bm-176'},
+        savedWeeks: [
+          SavedWeek(
+            id: 'a',
+            name: 'Semaine rapide',
+            savedAt: DateTime.utc(2026, 10, 1, 12),
+            plan: plan,
+          ),
+        ],
+      );
+    }
+
+    FilledButton saveButton(WidgetTester tester) => tester.widget<FilledButton>(
+          find.ancestor(
+            of: find.text('Sauvegarder maintenant'),
+            matching: find.bySubtype<FilledButton>(),
+          ),
+        );
+
+    testWidgets('pas d\'icône sans service de sauvegarde', (tester) async {
+      await tester.pumpWidget(OunjeMiApp(repository: FakeRepository()));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Sauvegarde'), findsNothing);
+    });
+    testWidgets('connexion puis état connecté', (tester) async {
+      final service = FakeBackupService();
+      await openBackup(tester, FakeRepository(), service);
+      expect(find.text('Sauvegarder maintenant'), findsNothing);
+      await tester.tap(find.text('Se connecter à Google'));
+      await tester.pumpAndSettle();
+      expect(find.text('moi@example.com'), findsOneWidget);
+      expect(find.text('Aucune sauvegarde'), findsOneWidget);
+      await tester.tap(find.text('Se déconnecter'));
+      await tester.pumpAndSettle();
+      expect(find.text('Se connecter à Google'), findsOneWidget);
+    });
+    testWidgets('connexion annulée sans message d\'erreur', (tester) async {
+      final service = FakeBackupService()..cancelSignIn = true;
+      await openBackup(tester, FakeRepository(), service);
+      await tester.tap(find.text('Se connecter à Google'));
+      await tester.pumpAndSettle();
+      expect(find.text('Se connecter à Google'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
+    });
+    testWidgets('sauvegarder envoie les données et affiche la date',
+        (tester) async {
+      final repository = FakeRepository()..favorites.add('bm-176');
+      final service = FakeBackupService()..account = 'moi@example.com';
+      await openBackup(tester, repository, service);
+      expect(find.text('Aucune sauvegarde'), findsOneWidget);
+      await tester.tap(find.text('Sauvegarder maintenant'));
+      await tester.pumpAndSettle();
+      expect(service.remote?.favorites, {'bm-176'});
+      expect(
+        find.textContaining('Dernière sauvegarde : 5 octobre'),
+        findsOneWidget,
+      );
+      expect(find.text('Sauvegarde effectuée.'), findsOneWidget);
+      expect(saveButton(tester).onPressed, isNotNull);
+    });
+    testWidgets('téléphone vide : confirmation avant d\'écraser',
+        (tester) async {
+      final repository = FakeRepository();
+      final service = FakeBackupService()
+        ..account = 'moi@example.com'
+        ..remote = remote(repository);
+      await openBackup(tester, repository, service);
+      await tester.tap(find.text('Sauvegarder maintenant'));
+      await tester.pumpAndSettle();
+      expect(find.text('Remplacer la sauvegarde ?'), findsOneWidget);
+      await tester.tap(find.text('Annuler'));
+      await tester.pumpAndSettle();
+      expect(service.uploads, 0);
+      expect(service.remote!.favorites, {'bm-176'});
+      await tester.tap(find.text('Sauvegarder maintenant'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Remplacer'));
+      await tester.pumpAndSettle();
+      expect(service.uploads, 1);
+      expect(service.remote!.isEmpty, isTrue);
+    });
+    testWidgets('restaurer remplace les données et revient à l\'accueil',
+        (tester) async {
+      final repository = FakeRepository()..favorites.add('bm-114');
+      final service = FakeBackupService()..account = 'moi@example.com';
+      final backup = service.remote = remote(repository);
+      await openBackup(tester, repository, service);
+      await tester.tap(find.text('Restaurer'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('1 favori, 1 semaine enregistrée.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Restaurer'));
+      await tester.pumpAndSettle();
+      expect(find.text('Sauvegarde'), findsNothing);
+      expect(repository.favorites, {'bm-176'});
+      expect(repository.saved?.toJson(), backup.plan!.toJson());
+      expect(repository.weeks.single.name, 'Semaine rapide');
+      await tester.tap(find.text('Favoris'));
+      await tester.pumpAndSettle();
+      expect(find.text('1 favori'), findsOneWidget);
+      await tester.tap(find.text('Ma semaine'));
+      await tester.pumpAndSettle();
+      // La proposition suivante repart des réglages restaurés.
+      await tester.tap(find.text('Nouvelle proposition'));
+      await tester.pumpAndSettle();
+      expect(repository.saved!.options.seed, 8);
+      expect(tester.takeException(), isNull);
+    });
+    testWidgets('semaines illisibles signalées, restauration annulée',
+        (tester) async {
+      final repository = FakeRepository()..favorites.add('bm-114');
+      final source = remote(repository);
+      final service = FakeBackupService()
+        ..account = 'moi@example.com'
+        ..remote = AppBackup(
+          savedAt: source.savedAt,
+          plan: null,
+          favorites: const {},
+          savedWeeks: const [],
+          skippedWeeks: 2,
+        );
+      await openBackup(tester, repository, service);
+      await tester.tap(find.text('Restaurer'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('2 semaines illisibles ignorées.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('aucune semaine en cours'), findsOneWidget);
+      await tester.tap(find.text('Annuler'));
+      await tester.pumpAndSettle();
+      expect(repository.favorites, {'bm-114'});
+      expect(find.text('Sauvegarder maintenant'), findsOneWidget);
+    });
+    testWidgets('restaurer sans sauvegarde sur le compte', (tester) async {
+      final repository = FakeRepository()..favorites.add('bm-114');
+      final service = FakeBackupService()..account = 'moi@example.com';
+      await openBackup(tester, repository, service);
+      await tester.tap(find.text('Restaurer'));
+      await tester.pumpAndSettle();
+      expect(find.text('Aucune sauvegarde sur ce compte.'), findsOneWidget);
+      expect(repository.favorites, {'bm-114'});
+    });
+    testWidgets('erreur réseau affichée, boutons de nouveau actifs',
+        (tester) async {
+      final repository = FakeRepository()..favorites.add('bm-114');
+      final service = FakeBackupService()..account = 'moi@example.com';
+      await openBackup(tester, repository, service);
+      service.error = const DriveBackupException(DriveError.network);
+      await tester.tap(find.text('Sauvegarder maintenant'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Pas de connexion. Réessaie plus tard.'),
+        findsOneWidget,
+      );
+      expect(service.remote, isNull);
+      expect(saveButton(tester).onPressed, isNotNull);
+    });
+    testWidgets('sauvegarde plus récente refusée sans rien modifier',
+        (tester) async {
+      final repository = FakeRepository()..favorites.add('bm-114');
+      final service = FakeBackupService()..account = 'moi@example.com';
+      await openBackup(tester, repository, service);
+      service.error = const BackupTooRecentException(2);
+      await tester.tap(find.text('Restaurer'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('version plus récente'), findsOneWidget);
+      expect(repository.favorites, {'bm-114'});
+    });
+    testWidgets('session expirée : retour à l\'état non connecté',
+        (tester) async {
+      final service = FakeBackupService()..account = 'moi@example.com';
+      await openBackup(tester, FakeRepository(), service);
+      service.error = const DriveBackupException(DriveError.signedOut);
+      await tester.tap(find.text('Restaurer'));
+      await tester.pumpAndSettle();
+      expect(find.text('Se connecter à Google'), findsOneWidget);
+    });
+    testWidgets('erreur dès l\'ouverture de l\'écran', (tester) async {
+      final service = FakeBackupService()
+        ..account = 'moi@example.com'
+        ..error = const DriveBackupException(DriveError.http, statusCode: 500);
+      await openBackup(tester, FakeRepository(), service);
+      expect(
+        find.text('Connexion impossible (erreur 500).'),
+        findsOneWidget,
+      );
+      expect(find.text('moi@example.com'), findsOneWidget);
+    });
+    testWidgets('écran sans débordement sur téléphone', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(360, 740));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = FakeRepository();
+      final service = FakeBackupService()
+        ..account = 'un.compte.assez.long@example.com'
+        ..remote = remote(repository);
+      await openBackup(tester, repository, service);
+      await tester.tap(find.text('Restaurer'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+  });
+}
+
+/// Compte et dossier Drive simulés en mémoire.
+class FakeBackupService implements DriveBackupService {
+  String? account;
+  bool cancelSignIn = false;
+  AppBackup? remote;
+  Object? error;
+  int uploads = 0;
+  void _check() {
+    final e = error;
+    if (e != null) throw e;
+  }
+
+  @override
+  Future<String?> restoreAccount() async => account;
+  @override
+  Future<String?> signIn() async =>
+      cancelSignIn ? null : account = 'moi@example.com';
+  @override
+  Future<void> signOut() async => account = null;
+  @override
+  Future<DateTime?> lastBackupTime() async {
+    _check();
+    return remote?.savedAt;
+  }
+
+  @override
+  Future<void> upload(AppBackup backup) async {
+    _check();
+    uploads++;
+    remote = backup;
+  }
+
+  @override
+  Future<AppBackup?> download() async {
+    _check();
+    return remote;
+  }
 }
 
 class FailingRepository implements RecipeRepository {
