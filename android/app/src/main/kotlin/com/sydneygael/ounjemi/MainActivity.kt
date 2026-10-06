@@ -1,4 +1,4 @@
-package com.example.ounje_mi
+package com.sydneygael.ounjemi
 
 import io.flutter.embedding.android.FlutterActivity
 

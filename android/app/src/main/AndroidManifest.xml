@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Sauvegarde sur Google Drive. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="ounje_mi"
         android:name="${applicationName}"
