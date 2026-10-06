@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../domain/backup.dart';
 import '../domain/planner.dart';
 import '../domain/recipe.dart';
 
@@ -18,6 +19,10 @@ abstract class RecipeRepository {
   Future<void> saveWeek(SavedWeek week);
   Future<void> renameWeek(String id, String name);
   Future<void> deleteWeek(String id);
+  Future<AppBackup> exportBackup();
+
+  /// Remplace la semaine courante, les favoris et les semaines enregistrées.
+  Future<void> importBackup(AppBackup backup);
 }
 
 class LocalRecipeRepository implements RecipeRepository {
@@ -361,6 +366,61 @@ class LocalRecipeRepository implements RecipeRepository {
       await _writeWebWeeks(
         _webWeeks().where((e) => e is! Map || e['id'] != id).toList(),
       );
+    }
+  }
+
+  @override
+  Future<AppBackup> exportBackup() async => AppBackup(
+        savedAt: DateTime.now().toUtc(),
+        plan: await loadPlan(),
+        favorites: await loadFavorites(),
+        savedWeeks: await loadSavedWeeks(),
+      );
+
+  @override
+  Future<void> importBackup(AppBackup backup) async {
+    await _initialize();
+    final plan = backup.plan;
+    if (_useSqlite) {
+      // Une seule transaction : en cas d'échec, les données d'avant restent.
+      await _db!.transaction((txn) async {
+        await txn.delete('plans');
+        await txn.delete('favorites');
+        await txn.delete('saved_weeks');
+        if (plan != null) {
+          await txn.insert('plans', {
+            'id': plan.id,
+            'created_at': plan.createdAt.toIso8601String(),
+            'payload': jsonEncode(plan.toJson()),
+          });
+        }
+        for (final id in backup.favorites) {
+          await txn.insert('favorites', {'recipe_id': id});
+        }
+        for (final week in backup.savedWeeks) {
+          await txn.insert('saved_weeks', {
+            'id': week.id,
+            'name': week.name,
+            'saved_at': week.savedAt.toIso8601String(),
+            'payload': jsonEncode(week.plan.toJson()),
+          });
+        }
+      });
+      return;
+    }
+    await _writeWebWeeks(backup.savedWeeks.map((w) => w.toJson()).toList());
+    final preferences = _preferences!;
+    if (!await preferences.setStringList(
+          'ounje_mi_favorites',
+          backup.favorites.toList()..sort(),
+        ) ||
+        !await (plan == null
+            ? preferences.remove('ounje_mi_latest_plan')
+            : preferences.setString(
+                'ounje_mi_latest_plan',
+                jsonEncode(plan.toJson()),
+              ))) {
+      throw StateError('La sauvegarde locale a échoué.');
     }
   }
 }

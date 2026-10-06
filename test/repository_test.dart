@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:ounje_mi/data/recipe_repository.dart';
+import 'package:ounje_mi/domain/backup.dart';
 import 'package:ounje_mi/domain/planner.dart';
 import 'package:ounje_mi/domain/recipe.dart';
 
@@ -69,6 +70,57 @@ void main() {
       expect((await repository.loadSavedWeeks()).map((w) => w.id), ['a']);
       // Enregistrer une semaine ne touche pas la semaine courante.
       expect(await repository.loadPlan(), isNull);
+    });
+    test('la sauvegarde exportée puis importée remplace tout', () async {
+      final repository = LocalRecipeRepository();
+      final recipes = await repository.loadRecipes();
+      const planner = WeeklyPlanner();
+      final plan = planner.generate(recipes, PlanOptions());
+      SavedWeek week(String id) => SavedWeek(
+            id: id,
+            name: 'Semaine $id',
+            savedAt: DateTime.utc(2026, 10, 1),
+            plan: plan,
+          );
+      await repository.savePlan(plan);
+      await repository.setFavorite('bm-176', true);
+      await repository.saveWeek(week('a'));
+      final backup = await repository.exportBackup();
+      expect(backup.plan?.toJson(), plan.toJson());
+      expect(backup.favorites, {'bm-176'});
+      expect(backup.savedWeeks.single.id, 'a');
+
+      // Des données ajoutées après la sauvegarde disparaissent à l'import.
+      await repository
+          .savePlan(planner.generate(recipes, PlanOptions(seed: 1)));
+      await repository.setFavorite('bm-114', true);
+      await repository.saveWeek(week('b'));
+      await repository.importBackup(backup);
+      final fresh = LocalRecipeRepository();
+      expect((await fresh.loadPlan())?.toJson(), plan.toJson());
+      expect(await fresh.loadFavorites(), {'bm-176'});
+      expect((await fresh.loadSavedWeeks()).map((w) => w.id), ['a']);
+      expect((await fresh.loadRecipes()).length, 146);
+    });
+    test('importer une sauvegarde vide efface la semaine courante', () async {
+      final repository = LocalRecipeRepository();
+      final recipes = await repository.loadRecipes();
+      await repository.savePlan(
+        const WeeklyPlanner().generate(recipes, PlanOptions()),
+      );
+      await repository.setFavorite('bm-176', true);
+      await repository.importBackup(
+        AppBackup(
+          savedAt: DateTime.utc(2026, 10, 5),
+          plan: null,
+          favorites: const {},
+          savedWeeks: const [],
+        ),
+      );
+      final fresh = LocalRecipeRepository();
+      expect(await fresh.loadPlan(), isNull);
+      expect(await fresh.loadFavorites(), isEmpty);
+      expect((await fresh.exportBackup()).isEmpty, isTrue);
     });
   }
 
@@ -142,6 +194,36 @@ void main() {
       await db.update('metadata', {'value': 'ancien catalogue'});
       expect((await repository.loadRecipes()).length, 146);
       expect(await repository.loadFavorites(), {'bm-176'});
+    });
+    test('un import en échec ne modifie rien', () async {
+      final repository = LocalRecipeRepository();
+      final recipes = await repository.loadRecipes();
+      const planner = WeeklyPlanner();
+      final plan = planner.generate(recipes, PlanOptions());
+      SavedWeek week(String id) => SavedWeek(
+            id: id,
+            name: 'Semaine $id',
+            savedAt: DateTime.utc(2026, 10, 1),
+            plan: plan,
+          );
+      await repository.savePlan(plan);
+      await repository.setFavorite('bm-176', true);
+      await repository.saveWeek(week('a'));
+      // Deux semaines de même identifiant violent la clé primaire.
+      await expectLater(
+        repository.importBackup(
+          AppBackup(
+            savedAt: DateTime.utc(2026, 10, 5),
+            plan: planner.generate(recipes, PlanOptions(seed: 1)),
+            favorites: {'bm-114'},
+            savedWeeks: [week('b'), week('b')],
+          ),
+        ),
+        throwsA(isA<DatabaseException>()),
+      );
+      expect((await repository.loadPlan())?.toJson(), plan.toJson());
+      expect(await repository.loadFavorites(), {'bm-176'});
+      expect((await repository.loadSavedWeeks()).map((w) => w.id), ['a']);
     });
     test('migration de la version 1 vers la version 2', () async {
       final old = await openDatabase(

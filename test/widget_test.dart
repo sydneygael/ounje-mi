@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ounje_mi/data/recipe_repository.dart';
+import 'package:ounje_mi/domain/backup.dart';
 import 'package:ounje_mi/domain/planner.dart';
 import 'package:ounje_mi/domain/recipe.dart';
 import 'package:ounje_mi/main.dart';
@@ -58,6 +59,24 @@ class FakeRepository implements RecipeRepository {
   @override
   Future<void> deleteWeek(String id) async {
     weeks.removeWhere((w) => w.id == id);
+  }
+
+  @override
+  Future<AppBackup> exportBackup() async => AppBackup(
+        savedAt: DateTime.utc(2026, 10, 5, 12),
+        plan: saved,
+        favorites: {...favorites},
+        savedWeeks: [...weeks],
+      );
+  @override
+  Future<void> importBackup(AppBackup backup) async {
+    saved = backup.plan;
+    favorites
+      ..clear()
+      ..addAll(backup.favorites);
+    weeks
+      ..clear()
+      ..addAll(backup.savedWeeks);
   }
 }
 
@@ -397,4 +416,8 @@ class FailingRepository implements RecipeRepository {
   Future<void> renameWeek(String id, String name) async {}
   @override
   Future<void> deleteWeek(String id) async {}
+  @override
+  Future<AppBackup> exportBackup() async => throw StateError('test');
+  @override
+  Future<void> importBackup(AppBackup backup) async {}
 }
